@@ -1,0 +1,15 @@
+[package]
+name = "teams-terminal"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.11", features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ratatui = "0.29.0"
+crossterm = "0.28.1"
+dotenv = "0.15"
+dirs = "5.0"
+anyhow = "1.0"
