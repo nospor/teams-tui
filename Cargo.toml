@@ -1,5 +1,5 @@
 [package]
-name = "teams-terminal"
+name = "teams-tui"
 version = "0.1.0"
 edition = "2021"
 
@@ -13,3 +13,4 @@ crossterm = "0.28.1"
 dotenv = "0.15"
 dirs = "5.0"
 anyhow = "1.0"
+chrono = "0.4.42"

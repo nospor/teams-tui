@@ -4,14 +4,53 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+#[derive(Debug, Serialize, Deserialize)]
+struct Config {
+    pub client_id: Option<String>,
+    pub tenant_id: Option<String>,
+}
+
+fn get_app_dir() -> Result<PathBuf> {
+    let config_dir = dirs::config_dir()
+        .context("Could not find config directory")?;
+    let app_dir = config_dir.join(crate::config::APP_DIR_NAME);
+    fs::create_dir_all(&app_dir)?;
+    Ok(app_dir)
+}
+
+fn load_config() -> Option<Config> {
+    let app_dir = get_app_dir().ok()?;
+    let config_path = app_dir.join("config.json");
+    
+    if !config_path.exists() {
+        return None;
+    }
+    
+    let json = fs::read_to_string(config_path).ok()?;
+    serde_json::from_str(&json).ok()
+}
+
 fn get_client_id() -> String {
+    // 1. Try env var
     dotenv::dotenv().ok();
-    std::env::var("CLIENT_ID")
-        .unwrap_or_else(|_| "d3590ed6-52b3-4102-aeff-aad2292ab01c".to_string())
+    if let Ok(id) = std::env::var("CLIENT_ID") {
+        return id;
+    }
+
+    // 2. Try config file
+    if let Some(config) = load_config() {
+        if let Some(id) = config.client_id {
+            return id;
+        }
+    }
+
+    // 3. Fallback
+    eprintln!("Warning: CLIENT_ID not found in environment or config, using default fallback.");
+    "d3590ed6-52b3-4102-aeff-aad2292ab01c".to_string()
 }
 
 const TENANT: &str = "common";
-const SCOPES: &str = "https://graph.microsoft.com/.default offline_access";
+const SCOPES: &str = "User.Read Chat.ReadWrite offline_access";
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DeviceCodeResponse {
@@ -29,7 +68,7 @@ pub struct TokenResponse {
     pub token_type: String,
     pub expires_in: u64,
     pub refresh_token: Option<String>,
-    #[serde(skip)]
+    #[serde(default)]
     pub expires_at: u64,
 }
 
@@ -41,7 +80,7 @@ struct TokenErrorResponse {
 fn get_token_path() -> Result<PathBuf> {
     let config_dir = dirs::config_dir()
         .context("Could not find config directory")?;
-    let app_dir = config_dir.join("teams-terminal");
+    let app_dir = config_dir.join(crate::config::APP_DIR_NAME);
     fs::create_dir_all(&app_dir)?;
     Ok(app_dir.join("token.json"))
 }
@@ -155,7 +194,7 @@ pub async fn poll_for_token(device_code: &str, interval: u64) -> Result<TokenRes
     }
 }
 
-pub async fn get_access_token() -> Result<String> {
+pub async fn get_valid_token_silent() -> Result<String> {
     // Try to load existing token
     if let Some(token) = load_token()? {
         let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
@@ -171,6 +210,14 @@ pub async fn get_access_token() -> Result<String> {
                 return Ok(new_token.access_token);
             }
         }
+    }
+    anyhow::bail!("No valid token found and refresh failed")
+}
+
+pub async fn get_access_token() -> Result<String> {
+    // Try to get silent token first
+    if let Ok(token) = get_valid_token_silent().await {
+        return Ok(token);
     }
 
     // Need to do full device flow

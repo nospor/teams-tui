@@ -16,7 +16,7 @@ Open your browser and navigate to:
 1. In the left sidebar, navigate to: **Identity** → **Applications** → **App registrations**
 2. Click **+ New registration**
 3. Fill in the form:
-   - **Name**: `Teams Terminal Client` (or any name you prefer)
+   - **Name**: `Teams TUI Client` (or any name you prefer)
    - **Supported account types**: Select **"Accounts in any organizational directory and personal Microsoft accounts"**
    - **Redirect URI**: Leave this **blank** (device code flow doesn't need it)
 4. Click **Register**
@@ -42,6 +42,7 @@ After registration, you'll see the **Overview** page:
 3. Select **Microsoft Graph**
 4. Select **Delegated permissions**
 5. **IMPORTANT**: Search for and add these **exact** permissions:
+   - Type `User.Read` and check the box
    - Type `Chat.Read` and check the box
    - Type `Chat.ReadWrite` and check the box  
    - Type `offline_access` and check the box
@@ -52,7 +53,8 @@ After registration, you'll see the **Overview** page:
 7. *Optional*: Click **Grant admin consent for [Your Organization]** (if you're an admin)
 
 **After adding permissions, your API permissions list should show:**
-- Microsoft Graph (3):
+- Microsoft Graph (4):
+  - User.Read
   - Chat.Read
   - Chat.ReadWrite
   - offline_access
@@ -65,21 +67,19 @@ If you get an error like `The scope 'Chat.Read Chat.ReadWrite offline_access' do
 2. **You added Application permissions instead of Delegated** - Remove them and add Delegated permissions
 3. **The permissions weren't saved** - Refresh the Azure Portal page and check if they're still there
 
+### Troubleshooting: "Failed to get current user info"
+
+If you get this error, you're missing the `User.Read` permission:
+
+1. Go to **API permissions** in Azure Portal
+2. Click **+ Add a permission** → **Microsoft Graph** → **Delegated permissions**
+3. Search for and add `User.Read`
+4. **Delete your saved token**: `rm ~/.config/teams-tui/token.json`
+5. Run the app again and re-authenticate
+
 ### 6. Update Your Application
 
-Create a `.env` file in your project directory:
-
-```bash
-cd /home/robertn/projects/vag1/html/teams-terminal
-nano .env
-```
-
-Add this line (replace with your actual Client ID):
-```
-CLIENT_ID=your-client-id-here
-```
-
-Save and exit (Ctrl+X, then Y, then Enter).
+See the **README.md** for instructions on setting the Client ID (Quick Start, point 2).
 
 ### 7. Run the Application
 
