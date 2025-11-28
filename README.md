@@ -99,7 +99,6 @@ If at some point you want/need to re-authenticate, just delete the `token.json` 
 
 ## TODO
 
-- [ ] Set messages as `read` when viewed
 - [ ] Send multi line messages
 - [ ] Adding info when attachment/image was added to a message (currently it strips attachments)
 - [ ] Showing images

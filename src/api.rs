@@ -323,15 +323,11 @@ pub async fn get_chats(access_token: &str) -> Result<(Vec<Chat>, Option<String>)
 
     let chats_response = response.json::<ChatsResponse>().await?;
     
-    // Filter out meeting chats - only show oneOnOne and group chats
-    let mut filtered_chats: Vec<Chat> = chats_response
-        .value
-        .into_iter()
-        .filter(|chat| chat.chat_type == "oneOnOne" || chat.chat_type == "group")
-        .collect();
+    // Process all chats (including meeting chats)
+    let mut chats: Vec<Chat> = chats_response.value;
     
     // Fetch members for each chat to get display names
-    for chat in &mut filtered_chats {
+    for chat in &mut chats {
         chat.members = get_chat_members(access_token, &chat.id).await.unwrap_or_default();
     }
     
@@ -339,7 +335,7 @@ pub async fn get_chats(access_token: &str) -> Result<(Vec<Chat>, Option<String>)
     // This member is most likely the current user
     let mut current_user_name: Option<String> = None;
     
-    let one_on_one_chats: Vec<&Chat> = filtered_chats.iter()
+    let one_on_one_chats: Vec<&Chat> = chats.iter()
         .filter(|c| c.chat_type == "oneOnOne")
         .collect();
     
@@ -369,7 +365,7 @@ pub async fn get_chats(access_token: &str) -> Result<(Vec<Chat>, Option<String>)
     
     // Now filter out the current user from all chats by name
     if let Some(user_name) = &current_user_name {
-        for chat in &mut filtered_chats {
+        for chat in &mut chats {
             chat.members.retain(|m| {
                 m.display_name.as_ref().map(|name| name != user_name).unwrap_or(true)
             });
@@ -377,13 +373,13 @@ pub async fn get_chats(access_token: &str) -> Result<(Vec<Chat>, Option<String>)
     }
     
     // Compute display names for all chats
-    for chat in &mut filtered_chats {
+    for chat in &mut chats {
         chat.cached_display_name = if chat.chat_type == "oneOnOne" {
             // For oneOnOne, use the first member's name
             chat.members.first()
                 .and_then(|m| m.display_name.clone())
-        } else if chat.chat_type == "group" {
-            // For group, prefer topic, otherwise show member names
+        } else if chat.chat_type == "group" || chat.chat_type == "meeting" {
+            // For group and meeting chats, prefer topic, otherwise show member names
             if let Some(topic) = &chat.topic {
                 if !topic.is_empty() {
                     Some(topic.clone())
@@ -398,7 +394,12 @@ pub async fn get_chats(access_token: &str) -> Result<(Vec<Chat>, Option<String>)
                     if !names.is_empty() {
                         Some(names.join(", "))
                     } else {
-                        Some("Unnamed Group".to_string())
+                        let default_name = if chat.chat_type == "meeting" {
+                            "Unnamed Meeting".to_string()
+                        } else {
+                            "Unnamed Group".to_string()
+                        };
+                        Some(default_name)
                     }
                 }
             } else {
@@ -412,13 +413,49 @@ pub async fn get_chats(access_token: &str) -> Result<(Vec<Chat>, Option<String>)
                 if !names.is_empty() {
                     Some(names.join(", "))
                 } else {
-                    Some("Unnamed Group".to_string())
+                    let default_name = if chat.chat_type == "meeting" {
+                        "Unnamed Meeting".to_string()
+                    } else {
+                        "Unnamed Group".to_string()
+                    };
+                    Some(default_name)
                 }
             }
         } else {
-            Some("Unknown Chat".to_string())
+            // For other chat types, try topic first, then member names, then fallback
+            if let Some(topic) = &chat.topic {
+                if !topic.is_empty() {
+                    Some(topic.clone())
+                } else {
+                    // Try member names
+                    let names: Vec<String> = chat.members
+                        .iter()
+                        .filter_map(|m| m.display_name.as_ref().map(|n| abbreviate_name(n)))
+                        .take(3)
+                        .collect();
+                    
+                    if !names.is_empty() {
+                        Some(names.join(", "))
+                    } else {
+                        Some("Unknown Chat".to_string())
+                    }
+                }
+            } else {
+                // Try member names
+                let names: Vec<String> = chat.members
+                    .iter()
+                    .filter_map(|m| m.display_name.as_ref().map(|n| abbreviate_name(n)))
+                    .take(3)
+                    .collect();
+                
+                if !names.is_empty() {
+                    Some(names.join(", "))
+                } else {
+                    Some("Unknown Chat".to_string())
+                }
+            }
         };
     }
     
-    Ok((filtered_chats, current_user_name))
+    Ok((chats, current_user_name))
 }
