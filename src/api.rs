@@ -84,6 +84,7 @@ fn get_profile_path() -> Result<PathBuf> {
     Ok(app_dir.join("profile.json"))
 }
 
+
 fn save_profile(user: &User) -> Result<()> {
     let path = get_profile_path()?;
     let json = serde_json::to_string_pretty(user)?;
@@ -218,6 +219,89 @@ pub async fn send_message(access_token: &str, chat_id: &str, content: &str) -> R
         anyhow::bail!("Failed to send message: {} - {}", status, text);
     }
 
+    Ok(())
+}
+
+/// Mark a chat as read for the current user
+/// This marks all messages in the chat as read
+/// 
+/// Note: Microsoft Graph API may not support marking chat messages as read.
+/// This function attempts multiple endpoint variations but may silently fail.
+#[derive(Debug, Serialize)]
+struct MarkChatReadRequest {
+    user: MarkChatReadUser,
+}
+
+#[derive(Debug, Serialize)]
+struct MarkChatReadUser {
+    id: String,
+    #[serde(rename = "tenantId", skip_serializing_if = "Option::is_none")]
+    tenant_id: Option<String>,
+}
+
+pub async fn mark_chat_as_read(access_token: &str, chat_id: &str) -> Result<()> {
+    // Get current user info
+    let user = match get_me(access_token).await {
+        Ok(u) => u,
+        Err(_) => {
+            return Ok(());
+        }
+    };
+    
+    // Get tenant ID from organization endpoint
+    let client = reqwest::Client::new();
+    let org_url = format!("{}/organization", GRAPH_API_BASE);
+    
+    let tenant_id = match client
+        .get(&org_url)
+        .header("Authorization", format!("Bearer {}", access_token))
+        .send()
+        .await
+    {
+        Ok(org_response) if org_response.status().is_success() => {
+            #[derive(Deserialize)]
+            struct OrgResponse {
+                value: Vec<Org>,
+            }
+            #[derive(Deserialize)]
+            struct Org {
+                id: String,
+            }
+            
+            if let Ok(org_data) = org_response.json::<OrgResponse>().await {
+                org_data.value.first().map(|org| org.id.clone())
+            } else {
+                None
+            }
+        }
+        _ => None,
+    };
+    
+    let tenant_id = match tenant_id {
+        Some(id) => id,
+        None => {
+            return Ok(());
+        }
+    };
+    
+    // Mark chat as read using the working endpoint with user ID and tenant ID
+    let url = format!("{}/chats/{}/markChatReadForUser", GRAPH_API_BASE, chat_id);
+    let request_body = MarkChatReadRequest {
+        user: MarkChatReadUser {
+            id: user.id,
+            tenant_id: Some(tenant_id),
+        },
+    };
+    
+    let _ = client
+        .post(&url)
+        .header("Authorization", format!("Bearer {}", access_token))
+        .header("Content-Type", "application/json")
+        .json(&request_body)
+        .send()
+        .await;
+    
+    // Silently ignore errors to avoid disrupting the user experience
     Ok(())
 }
 
