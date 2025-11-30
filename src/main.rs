@@ -8,7 +8,7 @@ use std::io;
 use std::collections::HashMap;
 use anyhow::Result;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -490,37 +490,52 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mu
                         app.input_mode = false;
                         app.input_buffer.clear();
                     }
+                    // Handle Alt+Enter for newline (most reliable method)
+                    KeyCode::Enter if app.input_mode && key.modifiers.contains(KeyModifiers::ALT) => {
+                        // Alt+Enter = new line
+                        app.input_buffer.push('\n');
+                    }
                     KeyCode::Enter if app.input_mode => {
-                        if !app.input_buffer.is_empty() {
-                            let message = app.input_buffer.clone();
-                            app.input_buffer.clear();
-                            app.input_mode = false;
-                            
-                            // Send message logic
-                            if let Some(chat) = app.get_selected_chat() {
-                                let chat_id = chat.id.clone();
-                                let chat_index = app.selected_index;
-                                let tx = tx.clone();
-                                let tx_chats = tx_chats.clone(); // Clone for refresh
+                        // Check for Shift or Ctrl modifiers (may not work in all terminals)
+                        let has_shift = key.modifiers.contains(KeyModifiers::SHIFT);
+                        let has_ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+                        
+                        if has_shift || has_ctrl {
+                            // Shift+Enter or Ctrl+Enter = new line
+                            app.input_buffer.push('\n');
+                        } else {
+                            // Enter without modifiers = send message
+                            if !app.input_buffer.is_empty() {
+                                let message = app.input_buffer.clone();
+                                app.input_buffer.clear();
+                                app.input_mode = false;
                                 
-                                tokio::spawn(async move {
-                                    if let Ok(token) = auth::get_valid_token_silent().await {
-                                        match api::send_message(&token, &chat_id, &message).await {
-                                            Ok(_) => {
-                                                // Reload messages
-                                                if let Ok(messages) = api::get_messages(&token, &chat_id).await {
-                                                    let _ = tx.send((chat_index, messages));
+                                // Send message logic
+                                if let Some(chat) = app.get_selected_chat() {
+                                    let chat_id = chat.id.clone();
+                                    let chat_index = app.selected_index;
+                                    let tx = tx.clone();
+                                    let tx_chats = tx_chats.clone(); // Clone for refresh
+                                    
+                                    tokio::spawn(async move {
+                                        if let Ok(token) = auth::get_valid_token_silent().await {
+                                            match api::send_message(&token, &chat_id, &message).await {
+                                                Ok(_) => {
+                                                    // Reload messages
+                                                    if let Ok(messages) = api::get_messages(&token, &chat_id).await {
+                                                        let _ = tx.send((chat_index, messages));
+                                                    }
+                                                    // Refresh chat list to update last message preview
+                                                    if let Ok(chats) = api::get_chats(&token).await {
+                                                        let _ = tx_chats.send(chats);
+                                                    }
                                                 }
-                                                // Refresh chat list to update last message preview
-                                                if let Ok(chats) = api::get_chats(&token).await {
-                                                    let _ = tx_chats.send(chats);
-                                                }
+                                                Err(e) => eprintln!("Failed to send message: {}", e),
                                             }
-                                            Err(e) => eprintln!("Failed to send message: {}", e),
                                         }
-                                    }
-                                });
-                                app.snap_to_bottom = true;
+                                    });
+                                    app.snap_to_bottom = true;
+                                }
                             }
                         }
                     }

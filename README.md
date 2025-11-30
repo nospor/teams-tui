@@ -99,7 +99,6 @@ If at some point you want/need to re-authenticate, just delete the `token.json` 
 
 ## TODO
 
-- [ ] Send multi line messages
 - [ ] Adding info when attachment/image was added to a message (currently it strips attachments)
 - [ ] Showing images
 - [ ] Yanking urls (eventually adding some kind of vim mode to select/yank any text)

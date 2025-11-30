@@ -39,7 +39,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             .constraints(
                 [
                     Constraint::Min(3),      // Messages
-                    Constraint::Length(3),   // Input field
+                    Constraint::Min(3),       // Input field (min 3 lines for multiline)
                 ]
                 .as_ref(),
             )
@@ -414,19 +414,28 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         let input_widget = Paragraph::new(app.input_buffer.as_str())
             .block(
                 Block::default()
-                    .title("Type your message (Enter to send, ESC to cancel)")
+                    .title("Type your message (Enter to send, Alt+Enter for new line, ESC to cancel)")
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(Color::Green))
             )
-            .style(Style::default().fg(Color::White));
+            .style(Style::default().fg(Color::White))
+            .wrap(ratatui::widgets::Wrap { trim: false });
         
         f.render_widget(input_widget, messages_chunks[1]);
         
-        // Set cursor position
-        f.set_cursor_position((
-            messages_chunks[1].x + app.input_buffer.len() as u16 + 1,
-            messages_chunks[1].y + 1,
-        ));
+        // Calculate cursor position for multiline text
+        let lines: Vec<&str> = app.input_buffer.split('\n').collect();
+        let line_count = lines.len();
+        let current_line = if line_count > 0 { line_count - 1 } else { 0 };
+        let current_line_text = lines.get(current_line).unwrap_or(&"");
+        let cursor_x = messages_chunks[1].x + current_line_text.len() as u16 + 1;
+        let cursor_y = messages_chunks[1].y + current_line as u16 + 1;
+        
+        // Make sure cursor doesn't go beyond the input area
+        let max_y = messages_chunks[1].y + messages_chunks[1].height.saturating_sub(1);
+        let final_y = std::cmp::min(cursor_y, max_y);
+        
+        f.set_cursor_position((cursor_x, final_y));
     }
 
     // Status bar
