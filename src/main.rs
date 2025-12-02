@@ -574,8 +574,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mu
                             let _ = execute!(io::stdout(), crossterm::style::Print("\x1b_Ga=d,d=A\x1b\\"));
                         }
                         
-                        // Force full terminal clear
-                        let _ = terminal.clear();
+
 
                         if let Some(chat) = app.get_selected_chat() {
                             let chat_id = chat.id.clone();
@@ -600,8 +599,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mu
                             let _ = execute!(io::stdout(), crossterm::style::Print("\x1b_Ga=d,d=A\x1b\\"));
                         }
                         
-                        // Force full terminal clear
-                        let _ = terminal.clear();
+
 
                         if let Some(chat) = app.get_selected_chat() {
                             let chat_id = chat.id.clone();
