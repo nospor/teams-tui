@@ -7,6 +7,51 @@ use ratatui::{
 };
 use crate::app::App;
 
+// Get icon based on file extension or content type
+fn get_attachment_icon(name: &str, content_type: Option<&str>) -> &'static str {
+    // First try content type
+    if let Some(ct) = content_type {
+        if ct.starts_with("image/") {
+            return "🖼️";
+        } else if ct == "application/pdf" {
+            return "📄";
+        } else if ct.contains("excel") || ct.contains("spreadsheet") {
+            return "📊";
+        } else if ct.contains("word") || ct.contains("document") {
+            return "📝";
+        } else if ct.contains("powerpoint") || ct.contains("presentation") {
+            return "📊";
+        } else if ct.starts_with("video/") {
+            return "🎥";
+        } else if ct.starts_with("audio/") {
+            return "🎵";
+        } else if ct.contains("zip") || ct.contains("archive") {
+            return "📦";
+        }
+    }
+    
+    // Fall back to file extension
+    if let Some(dot_pos) = name.rfind('.') {
+        let ext = name[dot_pos + 1..].to_lowercase();
+        match ext.as_str() {
+            "jpg" | "jpeg" | "png" | "gif" | "bmp" | "svg" | "webp" => "🖼️",
+            "pdf" => "📄",
+            "doc" | "docx" => "📝",
+            "xls" | "xlsx" | "csv" => "📊",
+            "ppt" | "pptx" => "📊",
+            "mp4" | "avi" | "mov" | "mkv" | "webm" => "🎥",
+            "mp3" | "wav" | "ogg" | "flac" => "🎵",
+            "zip" | "rar" | "7z" | "tar" | "gz" => "📦",
+            "txt" => "📄",
+            "html" | "htm" => "🌐",
+            "json" | "xml" => "📋",
+            _ => "📎", // Default attachment icon
+        }
+    } else {
+        "📎" // No extension, use default
+    }
+}
+
 pub fn draw(f: &mut Frame, app: &mut App) {
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -140,13 +185,80 @@ pub fn draw(f: &mut Frame, app: &mut App) {
                 .map(|c| c.as_str())
                 .unwrap_or("");
             
+            
             // Strip HTML tags and extract text content
             let mut clean_content = content.to_string();
             
-            // Remove attachment tags (quoted messages) - they're just metadata
-            // Handle both self-closing <attachment ... /> and <attachment ...></attachment>
-            let mut attachment_removed = String::new();
+            // Extract pasted images (img tags) before processing attachments
+            #[derive(Clone)]
+            struct ImageInfo {
+                src: Option<String>,
+                alt: Option<String>,
+            }
+            
+            let mut pasted_images = Vec::new();
+            let mut img_processed = String::new();
             let mut remaining = clean_content.as_str();
+            
+            while let Some(img_start) = remaining.find("<img") {
+                // Add text before the img tag
+                img_processed.push_str(&remaining[..img_start]);
+                
+                // Find the end of the img tag
+                if let Some(tag_end) = remaining[img_start..].find('>') {
+                    let tag_str = &remaining[img_start..img_start + tag_end + 1];
+                    
+                    // Extract src and alt attributes
+                    let mut src = None;
+                    let mut alt = None;
+                    
+                    // Try to find src attribute
+                    for attr_pattern in &["src=\"", "src='"] {
+                        if let Some(src_start) = tag_str.find(attr_pattern) {
+                            let value_start = src_start + attr_pattern.len();
+                            let quote_char = if attr_pattern.ends_with('"') { '"' } else { '\'' };
+                            if let Some(src_end) = tag_str[value_start..].find(quote_char) {
+                                src = Some(tag_str[value_start..value_start + src_end].to_string());
+                                break;
+                            }
+                        }
+                    }
+                    
+                    // Try to find alt attribute
+                    for attr_pattern in &["alt=\"", "alt='"] {
+                        if let Some(alt_start) = tag_str.find(attr_pattern) {
+                            let value_start = alt_start + attr_pattern.len();
+                            let quote_char = if attr_pattern.ends_with('"') { '"' } else { '\'' };
+                            if let Some(alt_end) = tag_str[value_start..].find(quote_char) {
+                                alt = Some(tag_str[value_start..value_start + alt_end].to_string());
+                                break;
+                            }
+                        }
+                    }
+                    
+                    // If we found an image (has src or alt), store it
+                    if src.is_some() || alt.is_some() {
+                        pasted_images.push(ImageInfo { src, alt });
+                    }
+                    
+                    // Skip past the img tag
+                    remaining = &remaining[img_start + tag_end + 1..];
+                } else {
+                    // Malformed tag, skip the <img part
+                    img_processed.push_str(&remaining[..img_start + 4]);
+                    remaining = &remaining[img_start + 4..];
+                }
+            }
+            
+            // Add remaining text
+            img_processed.push_str(remaining);
+            clean_content = img_processed;
+            
+            // Extract attachment IDs from HTML and match with API attachments
+            // Skip message reference attachments (quoted/replied messages)
+            let mut attachment_ids = Vec::new();
+            let mut attachment_removed = String::new();
+            remaining = clean_content.as_str();
             
             while let Some(attach_start) = remaining.find("<attachment") {
                 // Add text before the attachment tag
@@ -154,10 +266,27 @@ pub fn draw(f: &mut Frame, app: &mut App) {
                 
                 // Find the end of the opening tag
                 if let Some(tag_end) = remaining[attach_start..].find('>') {
+                    let tag_str = &remaining[attach_start..attach_start + tag_end + 1];
+                    
+                    // Check if this is a message reference attachment
+                    // Message references often have type="messageReference" or similar
+                    let is_message_reference = tag_str.contains("type=\"messageReference\"")
+                        || tag_str.contains("type='messageReference'")
+                        || tag_str.contains("messageReference");
+                    
+                    // Extract attachment ID from the tag (only if not a message reference)
+                    if !is_message_reference {
+                        if let Some(id_start) = tag_str.find("id=\"") {
+                            let value_start = id_start + 4; // len("id=\"")
+                            if let Some(id_end) = tag_str[value_start..].find('"') {
+                                let attachment_id = tag_str[value_start..value_start + id_end].to_string();
+                                attachment_ids.push(attachment_id);
+                            }
+                        }
+                    }
+                    
                     // Check if it's self-closing (ends with />)
-                    let tag_str = &remaining[attach_start..attach_start + tag_end];
-                    if tag_str.ends_with('/') {
-                        // Self-closing: <attachment ... />
+                    if tag_str.ends_with("/>") {
                         remaining = &remaining[attach_start + tag_end + 1..];
                     } else {
                         // Has closing tag: <attachment ...></attachment>
@@ -177,6 +306,85 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             // Add remaining text
             attachment_removed.push_str(remaining);
             clean_content = attachment_removed;
+            
+            // Store attachment info for display
+            // Since $expand=attachments may not be supported, we'll use IDs from HTML
+            // and try to match with API attachments if available
+            #[derive(Clone)]
+            struct AttachmentDisplay {
+                id: String,
+                name: Option<String>,
+                content_type: Option<String>,
+            }
+            
+            let mut attachments = Vec::new();
+            let mut message_reference_ids = std::collections::HashSet::new();
+            
+            if let Some(api_attachments) = &msg.attachments {
+                // Match with API attachments if available
+                for attachment_id in &attachment_ids {
+                    if let Some(api_attachment) = api_attachments.iter().find(|a| a.id == *attachment_id) {
+                        // Skip message reference attachments (quoted/replied messages)
+                        // These have specific content types like "messageReference" or "application/vnd.microsoft.teams.message"
+                        let is_message_reference = api_attachment.content_type.as_ref()
+                            .map(|ct| {
+                                let ct_lower = ct.to_lowercase();
+                                ct_lower.contains("messagereference") 
+                                    || ct_lower.contains("vnd.microsoft.teams.message")
+                                    || ct_lower == "message/reference"
+                            })
+                            .unwrap_or(false);
+                        
+                        if is_message_reference {
+                            // Mark this ID as a message reference so we don't add it from HTML fallback
+                            message_reference_ids.insert(attachment_id.clone());
+                        } else {
+                            // Only add if it's not a message reference
+                            attachments.push(AttachmentDisplay {
+                                id: api_attachment.id.clone(),
+                                name: api_attachment.name.clone(),
+                                content_type: api_attachment.content_type.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+            
+            // If no API attachments matched, use IDs from HTML
+            // But skip message reference IDs that we identified from the API
+            for attachment_id in &attachment_ids {
+                if !attachments.iter().any(|a| a.id == *attachment_id) {
+                    // Skip if this is a known message reference
+                    if !message_reference_ids.contains(attachment_id) {
+                        attachments.push(AttachmentDisplay {
+                            id: attachment_id.clone(),
+                            name: None,
+                            content_type: None,
+                        });
+                    }
+                }
+            }
+            
+            // Add pasted images as attachments
+            for image in &pasted_images {
+                // Use alt text as name if available, otherwise use src filename or "Pasted Image"
+                let image_name = image.alt.clone()
+                    .or_else(|| {
+                        image.src.as_ref().and_then(|s| {
+                            // Try to extract filename from URL
+                            s.split('/').last()
+                                .or_else(|| s.split('\\').last())
+                                .map(|n| n.split('?').next().unwrap_or(n).to_string())
+                        })
+                    })
+                    .unwrap_or_else(|| "Pasted Image".to_string());
+                
+                attachments.push(AttachmentDisplay {
+                    id: format!("img_{}", attachments.len()), // Unique ID for display
+                    name: Some(image_name),
+                    content_type: Some("image/png".to_string()), // Default to image, could be enhanced
+                });
+            }
             
             // Extract emoji alt text: <emoji ... alt="😅" ...> -> 😅
             // Process emoji tags by finding them and replacing with alt text
@@ -354,6 +562,30 @@ pub fn draw(f: &mut Frame, app: &mut App) {
                 // Left aligned body
                 for line in wrapped_lines {
                     lines.push(Line::from(line));
+                }
+            }
+            
+            // Display attachments if any
+            if !attachments.is_empty() {
+                for attachment in &attachments {
+                    let attachment_name = attachment.name.as_deref().unwrap_or(&attachment.id);
+                    let icon = get_attachment_icon(attachment_name, attachment.content_type.as_deref());
+                    let attachment_text = format!("{} {}", icon, attachment_name);
+                    
+                    if is_me {
+                        // Right aligned attachment
+                        let padding = width.saturating_sub(attachment_text.len());
+                        let pad_str = " ".repeat(padding);
+                        lines.push(Line::from(vec![
+                            Span::raw(pad_str),
+                            Span::styled(attachment_text, Style::default().fg(Color::Yellow)),
+                        ]));
+                    } else {
+                        // Left aligned attachment
+                        lines.push(Line::from(vec![
+                            Span::styled(attachment_text, Style::default().fg(Color::Yellow)),
+                        ]));
+                    }
                 }
             }
         }

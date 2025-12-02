@@ -99,7 +99,6 @@ If at some point you want/need to re-authenticate, just delete the `token.json` 
 
 ## TODO
 
-- [ ] Adding info when attachment/image was added to a message (currently it strips attachments)
 - [ ] Showing images
 - [ ] Yanking urls (eventually adding some kind of vim mode to select/yank any text)
 - [ ] Notification when new message will arrive (bell in terminal? system notification? maybe notification mode so user can switch between different modes? 0 - none, 1 - terminal bell, 2 - system notification)

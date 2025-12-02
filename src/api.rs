@@ -34,6 +34,16 @@ pub struct Message {
     pub created_date_time: String,
     pub from: Option<MessageFrom>,
     pub body: Option<MessageBody>,
+    #[serde(default)]
+    pub attachments: Option<Vec<MessageAttachment>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MessageAttachment {
+    pub id: String,
+    pub name: Option<String>,
+    #[serde(rename = "contentType")]
+    pub content_type: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -167,6 +177,8 @@ async fn get_chat_members(access_token: &str, chat_id: &str) -> Result<Vec<ChatM
 
 pub async fn get_messages(access_token: &str, chat_id: &str) -> Result<Vec<Message>> {
     let client = reqwest::Client::new();
+    // Note: $expand=attachments may not be supported for chat messages
+    // For now, use regular endpoint - attachments will be None and we'll extract from HTML
     let url = format!("{}/chats/{}/messages", GRAPH_API_BASE, chat_id);
 
     let response = client
