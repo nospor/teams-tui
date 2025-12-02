@@ -16,6 +16,9 @@ use ratatui::{
     backend::CrosstermBackend,
     Terminal,
 };
+use image::ImageReader;
+use std::io::Cursor;
+use image::DynamicImage;
 use crate::app::App;
 
 #[tokio::main]
@@ -24,6 +27,13 @@ async fn main() -> Result<()> {
     println!("TeamsTUI");
     println!("================================\n");
     
+    // Load configuration
+    let config = config::load_config().unwrap_or(config::Config {
+        client_id: None,
+        tenant_id: None,
+        load_images: false, // Default to false as requested
+    });
+
     let access_token = match auth::get_access_token().await {
         Ok(token) => {
             println!("✓ Authentication successful!\n");
@@ -144,7 +154,7 @@ async fn main() -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     // Create app state
-    let mut app = App::new();
+    let mut app = App::new(config.load_images);
     app.set_chats(chats);
     if let Some(user) = current_user {
         app.set_current_user(user.display_name);
@@ -169,7 +179,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App, mut chat_last_message_times: HashMap<String, String>, _initial_access_token: String) -> Result<()> {
+async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App, mut chat_last_message_times: HashMap<String, String>, access_token: String) -> Result<()> {
     // Create a channel for receiving loaded messages
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<(usize, Vec<api::Message>)>();
     
@@ -178,6 +188,10 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mu
     
     // Create a channel for new message notifications (chat_id, last_message)
     let (tx_new_messages, mut rx_new_messages) = tokio::sync::mpsc::unbounded_channel::<(String, api::Message)>();
+
+    // Create a channel for loaded images
+    let (tx_images, mut rx_images) = tokio::sync::mpsc::unbounded_channel::<(String, DynamicImage)>();
+
     
     // Store the latest chat list from API for use when reordering
     let mut latest_chats_from_api: Option<Vec<api::Chat>> = None;
@@ -471,6 +485,69 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mu
             }
         }
         
+
+
+        // Check for loaded images
+        while let Ok((id, image)) = rx_images.try_recv() {
+            app.image_cache.insert(id, image);
+        }
+
+        // Scan for images to fetch
+        if app.load_images && !app.loading_messages {
+            let messages = app.messages.clone();
+            let cache_keys: Vec<String> = app.image_cache.keys().cloned().collect();
+            let tx_images = tx_images.clone();
+            let access_token = access_token.clone(); // Use the initial token or get a new one
+            
+            // We need a way to avoid spawning tasks for already fetching images
+            // For now, we'll just check if it's in the cache. 
+            // A pending set would be better but let's keep it simple for now.
+            
+            // Scan the visible messages (first 100, which are the newest)
+            for msg in messages.iter().take(100) {
+                if let Some(body) = &msg.body {
+                    if let Some(content) = &body.content {
+                        // Simple extraction of src attributes
+                        let mut remaining = content.as_str();
+                        while let Some(img_start) = remaining.find("<img") {
+                            remaining = &remaining[img_start..];
+                            if let Some(src_start) = remaining.find("src=\"") {
+                                let start = src_start + 5;
+                                if let Some(end) = remaining[start..].find('"') {
+                                    let url = remaining[start..start + end].to_string();
+                                    
+                                    // Use URL as ID for now
+                                    if !cache_keys.contains(&url) && url.starts_with("http") {
+                                        let tx = tx_images.clone();
+                                        let url_clone = url.clone();
+                                        let token = access_token.clone();
+                                        
+                                        // Spawn fetch task
+                                        tokio::spawn(async move {
+                                            // TODO: Use a fresh token if needed
+                                            if let Ok(bytes) = api::get_url_bytes(&token, &url_clone).await {
+                                                if let Ok(img) = ImageReader::new(Cursor::new(bytes)).with_guessed_format() {
+                                                    if let Ok(decoded) = img.decode() {
+                                                        let _ = tx.send((url_clone, decoded));
+                                                    }
+                                                }
+                                            }
+                                        });
+                                    }
+                                }
+                            }
+                            remaining = &remaining[1..];
+                        }
+                    }
+                }
+                
+                // Also check for file attachments that are images
+                // (Removed file attachment image fetching as it requires extra permissions)
+            }
+        }
+        
+
+
         terminal.draw(|f| ui::draw(f, app))?;
 
         // Use poll with timeout to allow checking for messages
@@ -480,8 +557,58 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mu
                 
                 match key.code {
                     KeyCode::Char('q') if !app.input_mode => return Ok(()),
-                    KeyCode::Down | KeyCode::Char('j') if !app.input_mode => app.next_chat(),
-                    KeyCode::Up | KeyCode::Char('k') if !app.input_mode => app.previous_chat(),
+                    KeyCode::Down | KeyCode::Char('j') if !app.input_mode => {
+                        app.next_chat();
+                        app.clear_image_protocols();
+                        app.clear_messages();
+                        
+                        // Force clear Kitty images if using Kitty protocol
+                        if let ratatui_image::picker::ProtocolType::Kitty = app.picker.protocol_type() {
+                            let _ = execute!(io::stdout(), crossterm::style::Print("\x1b_Ga=d,d=A\x1b\\"));
+                        }
+                        
+                        // Force full terminal clear
+                        let _ = terminal.clear();
+
+                        if let Some(chat) = app.get_selected_chat() {
+                            let chat_id = chat.id.clone();
+                            let chat_index = app.selected_index;
+                            let tx = tx.clone();
+                            let token = access_token.clone();
+                            app.set_loading_messages(true);
+                            tokio::spawn(async move {
+                                if let Ok(messages) = api::get_messages(&token, &chat_id).await {
+                                    let _ = tx.send((chat_index, messages));
+                                }
+                            });
+                        }
+                    }
+                    KeyCode::Up | KeyCode::Char('k') if !app.input_mode => {
+                        app.previous_chat();
+                        app.clear_image_protocols();
+                        app.clear_messages();
+                        
+                        // Force clear Kitty images if using Kitty protocol
+                        if let ratatui_image::picker::ProtocolType::Kitty = app.picker.protocol_type() {
+                            let _ = execute!(io::stdout(), crossterm::style::Print("\x1b_Ga=d,d=A\x1b\\"));
+                        }
+                        
+                        // Force full terminal clear
+                        let _ = terminal.clear();
+
+                        if let Some(chat) = app.get_selected_chat() {
+                            let chat_id = chat.id.clone();
+                            let chat_index = app.selected_index;
+                            let tx = tx.clone();
+                            let token = access_token.clone();
+                            app.set_loading_messages(true);
+                            tokio::spawn(async move {
+                                if let Ok(messages) = api::get_messages(&token, &chat_id).await {
+                                    let _ = tx.send((chat_index, messages));
+                                }
+                            });
+                        }
+                    }
                     KeyCode::Char('i') if !app.input_mode => {
                         app.input_mode = true;
                         app.input_buffer.clear();
@@ -515,26 +642,23 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mu
                                     let chat_id = chat.id.clone();
                                     let chat_index = app.selected_index;
                                     let tx = tx.clone();
-                                    let tx_chats = tx_chats.clone(); // Clone for refresh
+                                    let tx_chats = tx_chats.clone();
+                                    let token = access_token.clone();
                                     
                                     tokio::spawn(async move {
-                                        if let Ok(token) = auth::get_valid_token_silent().await {
-                                            match api::send_message(&token, &chat_id, &message).await {
-                                                Ok(_) => {
-                                                    // Reload messages
-                                                    if let Ok(messages) = api::get_messages(&token, &chat_id).await {
-                                                        let _ = tx.send((chat_index, messages));
-                                                    }
-                                                    // Refresh chat list to update last message preview
-                                                    if let Ok(chats) = api::get_chats(&token).await {
-                                                        let _ = tx_chats.send(chats);
-                                                    }
-                                                }
-                                                Err(e) => eprintln!("Failed to send message: {}", e),
+                                        if let Ok(_) = api::send_message(&token, &chat_id, &message).await {
+                                            // Reload messages
+                                            if let Ok(messages) = api::get_messages(&token, &chat_id).await {
+                                                let _ = tx.send((chat_index, messages));
                                             }
+                                            // Refresh chat list to update last message preview
+                                            if let Ok(chats) = api::get_chats(&token).await {
+                                                let _ = tx_chats.send(chats);
+                                            }
+                                        } else {
+                                            eprintln!("Failed to send message");
                                         }
                                     });
-                                    app.snap_to_bottom = true;
                                 }
                             }
                         }

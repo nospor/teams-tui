@@ -31,10 +31,12 @@ Follow the detailed guide in [AZURE_SETUP.md](AZURE_SETUP.md) to:
 Create a `config.json` file in `~/.config/teams-tui/` directory:
 ```json
 {
-  "client_id": "your-client-id-here"
+  "client_id": "your-client-id-here",
+  "load_images": true
 }
 ```
 Replace `your-client-id-here` with your actual Client ID from Azure.
+The `load_images` parameter is optional and defaults to `false`. Set it to `true` to enable inline image rendering (requires a compatible terminal like Kitty, WezTerm, Ghostty, or iTerm2).
 
 #### 2.2. Using `.env` file
 Alternatively, you can use a `.env` file.
@@ -99,7 +101,6 @@ If at some point you want/need to re-authenticate, just delete the `token.json` 
 
 ## TODO
 
-- [ ] Showing images
 - [ ] Yanking urls (eventually adding some kind of vim mode to select/yank any text)
 - [ ] Notification when new message will arrive (bell in terminal? system notification? maybe notification mode so user can switch between different modes? 0 - none, 1 - terminal bell, 2 - system notification)
 

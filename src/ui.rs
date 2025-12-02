@@ -3,9 +3,11 @@ use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph},
+    Terminal,
     Frame,
 };
 use crate::app::App;
+use ratatui_image::{StatefulImage, Resize};
 
 // Get icon based on file extension or content type
 fn get_attachment_icon(name: &str, content_type: Option<&str>) -> &'static str {
@@ -53,6 +55,14 @@ fn get_attachment_icon(name: &str, content_type: Option<&str>) -> &'static str {
 }
 
 pub fn draw(f: &mut Frame, app: &mut App) {
+    struct ImageToRender {
+        id: String,
+        line_index: usize,
+        height: u16,
+        is_me: bool,
+    }
+    let mut images_to_render: Vec<ImageToRender> = Vec::new();
+
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
@@ -379,11 +389,41 @@ pub fn draw(f: &mut Frame, app: &mut App) {
                     })
                     .unwrap_or_else(|| "Pasted Image".to_string());
                 
-                attachments.push(AttachmentDisplay {
-                    id: format!("img_{}", attachments.len()), // Unique ID for display
-                    name: Some(image_name),
-                    content_type: Some("image/png".to_string()), // Default to image, could be enhanced
-                });
+                // Check if we have this image in cache
+                if let Some(src) = &image.src {
+                    if app.load_images && app.image_cache.contains_key(src) {
+                        // It's an image we can render!
+                        // We'll add it to our render list instead of just showing text
+                        // But we also want to show the text "Pasted Image" maybe?
+                        // For now, let's just render the image.
+                        
+                        // Reserve space
+                        let height = 10u16;
+                        images_to_render.push(ImageToRender {
+                            id: src.clone(),
+                            line_index: lines.len(),
+                            height,
+                            is_me,
+                        });
+                        
+                        for _ in 0..height {
+                            lines.push(Line::from(""));
+                        }
+                    } else {
+                        // Fallback to text attachment if not loaded yet
+                        attachments.push(AttachmentDisplay {
+                            id: format!("img_{}", attachments.len()), // Unique ID for display
+                            name: Some(image_name),
+                            content_type: Some("image/png".to_string()), // Default to image, could be enhanced
+                        });
+                    }
+                } else {
+                     attachments.push(AttachmentDisplay {
+                        id: format!("img_{}", attachments.len()), // Unique ID for display
+                        name: Some(image_name),
+                        content_type: Some("image/png".to_string()), // Default to image, could be enhanced
+                    });
+                }
             }
             
             // Extract emoji alt text: <emoji ... alt="😅" ...> -> 😅
@@ -640,6 +680,60 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         .scroll((app.scroll_offset, 0));
 
     f.render_widget(messages_widget, messages_chunks[0]);
+
+    // Render images over the paragraph
+    let inner_area = messages_chunks[0].inner(ratatui::layout::Margin { vertical: 1, horizontal: 1 });
+    
+    for img_info in images_to_render {
+        // Calculate visual position
+        // line_index is 0-based index in lines
+        // scroll_offset is how many lines are scrolled off the top
+        
+        // If the image line is before the scroll offset, it's not visible (or partially)
+        // If it's after scroll_offset + height, it's not visible
+        
+        let line_y = img_info.line_index as i32 - app.scroll_offset as i32;
+        
+        // Check visibility
+        if line_y + (img_info.height as i32) > 0 && line_y < inner_area.height as i32 {
+            // Calculate intersection with viewport
+            let render_y = std::cmp::max(0, line_y);
+            let skip_lines = if line_y < 0 { -line_y } else { 0 };
+            let render_height = std::cmp::min(img_info.height as i32 - skip_lines as i32, inner_area.height as i32 - render_y);
+            
+            if render_height > 0 {
+                if let Some(image) = app.image_cache.get(&img_info.id) {
+                    // Get or create protocol
+                    if !app.image_protocols.contains_key(&img_info.id) {
+                        let protocol = app.picker.new_resize_protocol(image.clone());
+                        app.image_protocols.insert(img_info.id.clone(), protocol);
+                    }
+                    
+                    if let Some(protocol) = app.image_protocols.get_mut(&img_info.id) {
+                        let widget = StatefulImage::new(None).resize(Resize::Fit(None));
+                        
+                        let x = if img_info.is_me {
+                            // Right aligned
+                            // We need a width. Let's assume 40 columns for now.
+                            let width = 40u16;
+                            inner_area.width.saturating_sub(width)
+                        } else {
+                            0
+                        };
+                        
+                        let area = ratatui::layout::Rect {
+                            x: inner_area.x + x,
+                            y: inner_area.y + render_y as u16,
+                            width: 40, // Fixed width for now
+                            height: render_height as u16,
+                        };
+                        
+                        f.render_stateful_widget(widget, area, protocol);
+                    }
+                }
+            }
+        }
+    }
 
     // Render input field if in input mode
     if app.input_mode {
