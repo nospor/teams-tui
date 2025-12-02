@@ -32,7 +32,7 @@ Create a `config.json` file in `~/.config/teams-tui/` directory:
 ```json
 {
   "client_id": "your-client-id-here",
-  "load_images": true
+  "load_images": false
 }
 ```
 Replace `your-client-id-here` with your actual Client ID from Azure.
