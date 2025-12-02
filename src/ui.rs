@@ -3,12 +3,10 @@ use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph},
-    Terminal,
     Frame,
 };
 use crate::app::App;
 use ratatui_image::{StatefulImage, Resize};
-use image::GenericImageView;
 
 // Get icon based on file extension or content type
 fn get_attachment_icon(name: &str, content_type: Option<&str>) -> &'static str {

@@ -5,7 +5,7 @@ mod api;
 pub mod config;
 
 use std::io;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use anyhow::Result;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
@@ -207,6 +207,9 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mu
     // This is initialized from the correctly sorted initial load
     // We preserve this order on refresh and only reorder when new messages are detected
     let mut stable_chat_order: Vec<String> = app.chats.iter().map(|c| c.id.clone()).collect();
+
+    // Track pending image fetches to avoid duplicate requests
+    let mut pending_images: HashSet<String> = HashSet::new();
 
     // Spawn background task to refresh chats
     let tx_chats_clone = tx_chats.clone();
@@ -489,7 +492,8 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mu
 
         // Check for loaded images
         while let Ok((id, image)) = rx_images.try_recv() {
-            app.image_cache.insert(id, image);
+            app.image_cache.insert(id.clone(), image);
+            pending_images.remove(&id);
         }
 
         // Scan for images to fetch
@@ -517,10 +521,13 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mu
                                     let url = remaining[start..start + end].to_string();
                                     
                                     // Use URL as ID for now
-                                    if !cache_keys.contains(&url) && url.starts_with("http") {
+                                    if !cache_keys.contains(&url) && !pending_images.contains(&url) && url.starts_with("http") {
                                         let tx = tx_images.clone();
                                         let url_clone = url.clone();
                                         let token = access_token.clone();
+                                        
+                                        // Mark as pending
+                                        pending_images.insert(url.clone());
                                         
                                         // Spawn fetch task
                                         tokio::spawn(async move {

@@ -6,10 +6,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::config::{self, Config};
 
-fn get_app_dir() -> Result<PathBuf> {
-    config::get_app_dir()
-}
-
 fn load_config() -> Option<Config> {
     config::load_config()
 }
