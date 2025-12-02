@@ -377,87 +377,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
                 }
             }
             
-            // Add pasted images as attachments
-            for image in &pasted_images {
-                // Use alt text as name if available, otherwise use src filename or "Pasted Image"
-                let image_name = image.alt.clone()
-                    .or_else(|| {
-                        image.src.as_ref().and_then(|s| {
-                            // Try to extract filename from URL
-                            s.split('/').last()
-                                .or_else(|| s.split('\\').last())
-                                .map(|n| n.split('?').next().unwrap_or(n).to_string())
-                        })
-                    })
-                    .unwrap_or_else(|| "Pasted Image".to_string());
-                
-                // Check if we have this image in cache
-                if let Some(src) = &image.src {
-                    if app.load_images && app.image_cache.contains_key(src) {
-                        // It's an image we can render!
-                        // We'll add it to our render list instead of just showing text
-                        // But we also want to show the text "Pasted Image" maybe?
-                        // For now, let's just render the image.
-                        
-                        // Calculate dimensions
-                        // Heuristic: 1 col ~= 10px width, 1 row ~= 20px height (1:2 aspect ratio of cell)
-                        // 80% of width, capped at view width
-                        
-                        let (img_w, img_h) = if let Some(img) = app.image_cache.get(src) {
-                            (img.width(), img.height())
-                        } else {
-                            (100, 100) // Fallback
-                        };
-                        
-                        let avail_width = width as u16;
-                        
-                        // Calculate target width in columns
-                        // We scale the image pixels to columns (divide by 10)
-                        // Then we apply the 80% scaling if it's large, or just ensure it fits
-                        // Let's try: target = min(img_w / 8, avail_width * 0.8)
-                        // This allows large images to take 80% of screen, and small images to be roughly natural size
-                        let target_width = std::cmp::min(
-                            (img_w as f32 / 8.0) as u16,
-                            (avail_width as f32 * 0.8) as u16
-                        );
-                        
-                        // Ensure at least some width
-                        let final_width = std::cmp::max(10, target_width);
-                        
-                        // Calculate height to maintain aspect ratio
-                        // Aspect ratio = w / h
-                        // Cell aspect ratio ~= 0.5 (w/h)
-                        // rows = cols * (img_h / img_w) / 0.5 = cols * (img_h / img_w) * 2
-                        let final_height = (final_width as f32 * (img_h as f32 / img_w as f32) / 2.1) as u16;
-                        let final_height = std::cmp::max(1, final_height);
 
-                        images_to_render.push(ImageToRender {
-                            id: src.clone(),
-                            line_index: lines.len(),
-                            width: final_width,
-                            height: final_height,
-                            is_me,
-                        });
-                        
-                        for _ in 0..final_height {
-                            lines.push(Line::from(""));
-                        }
-                    } else {
-                        // Fallback to text attachment if not loaded yet
-                        attachments.push(AttachmentDisplay {
-                            id: format!("img_{}", attachments.len()), // Unique ID for display
-                            name: Some(image_name),
-                            content_type: Some("image/png".to_string()), // Default to image, could be enhanced
-                        });
-                    }
-                } else {
-                     attachments.push(AttachmentDisplay {
-                        id: format!("img_{}", attachments.len()), // Unique ID for display
-                        name: Some(image_name),
-                        content_type: Some("image/png".to_string()), // Default to image, could be enhanced
-                    });
-                }
-            }
             
             // Extract emoji alt text: <emoji ... alt="😅" ...> -> 😅
             // Process emoji tags by finding them and replacing with alt text
@@ -635,6 +555,88 @@ pub fn draw(f: &mut Frame, app: &mut App) {
                 // Left aligned body
                 for line in wrapped_lines {
                     lines.push(Line::from(line));
+                }
+            }
+            
+            // Add pasted images as attachments
+            for image in &pasted_images {
+                // Use alt text as name if available, otherwise use src filename or "Pasted Image"
+                let image_name = image.alt.clone()
+                    .or_else(|| {
+                        image.src.as_ref().and_then(|s| {
+                            // Try to extract filename from URL
+                            s.split('/').last()
+                                .or_else(|| s.split('\\').last())
+                                .map(|n| n.split('?').next().unwrap_or(n).to_string())
+                        })
+                    })
+                    .unwrap_or_else(|| "Pasted Image".to_string());
+                
+                // Check if we have this image in cache
+                if let Some(src) = &image.src {
+                    if app.load_images && app.image_cache.contains_key(src) {
+                        // It's an image we can render!
+                        // We'll add it to our render list instead of just showing text
+                        // But we also want to show the text "Pasted Image" maybe?
+                        // For now, let's just render the image.
+                        
+                        // Calculate dimensions
+                        // Heuristic: 1 col ~= 10px width, 1 row ~= 20px height (1:2 aspect ratio of cell)
+                        // 80% of width, capped at view width
+                        
+                        let (img_w, img_h) = if let Some(img) = app.image_cache.get(src) {
+                            (img.width(), img.height())
+                        } else {
+                            (100, 100) // Fallback
+                        };
+                        
+                        let avail_width = width as u16;
+                        
+                        // Calculate target width in columns
+                        // We scale the image pixels to columns (divide by 10)
+                        // Then we apply the 80% scaling if it's large, or just ensure it fits
+                        // Let's try: target = min(img_w / 8, avail_width * 0.8)
+                        // This allows large images to take 80% of screen, and small images to be roughly natural size
+                        let target_width = std::cmp::min(
+                            (img_w as f32 / 8.0) as u16,
+                            (avail_width as f32 * 0.8) as u16
+                        );
+                        
+                        // Ensure at least some width
+                        let final_width = std::cmp::max(10, target_width);
+                        
+                        // Calculate height to maintain aspect ratio
+                        // Aspect ratio = w / h
+                        // Cell aspect ratio ~= 0.5 (w/h)
+                        // rows = cols * (img_h / img_w) / 0.5 = cols * (img_h / img_w) * 2
+                        let final_height = (final_width as f32 * (img_h as f32 / img_w as f32) / 2.1) as u16;
+                        let final_height = std::cmp::max(1, final_height);
+
+                        images_to_render.push(ImageToRender {
+                            id: src.clone(),
+                            line_index: lines.len(),
+                            width: final_width,
+                            height: final_height,
+                            is_me,
+                        });
+                        
+                        for _ in 0..final_height {
+                            lines.push(Line::from(""));
+                        }
+                    } else {
+                        // Fallback to text attachment if not loaded yet
+                        attachments.push(AttachmentDisplay {
+                            id: format!("img_{}", attachments.len()), // Unique ID for display
+                            name: Some(image_name),
+                            content_type: Some("image/png".to_string()), // Default to image, could be enhanced
+                        });
+                    }
+                } else {
+                     attachments.push(AttachmentDisplay {
+                        id: format!("img_{}", attachments.len()), // Unique ID for display
+                        name: Some(image_name),
+                        content_type: Some("image/png".to_string()), // Default to image, could be enhanced
+                    });
                 }
             }
             
