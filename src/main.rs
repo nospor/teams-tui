@@ -150,6 +150,13 @@ async fn main() -> Result<()> {
     if let Some(user) = current_user {
         app.set_current_user(user.display_name);
     }
+    
+    // Load config and apply notification mode
+    if let Some(config) = crate::config::load_config() {
+        if let Some(mode) = config.notification_mode {
+            app.notification_mode = mode;
+        }
+    }
 
     // Run app (pass the initial message times we loaded and access token for background tasks)
     let res = run_app(&mut terminal, &mut app, chat_last_message_times, access_token).await;
@@ -520,7 +527,13 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mu
                     KeyCode::Char('q') if !app.input_mode => return Ok(()),
                     KeyCode::Down | KeyCode::Char('j') if !app.input_mode => app.next_chat(),
                     KeyCode::Up | KeyCode::Char('k') if !app.input_mode => app.previous_chat(),
-                    KeyCode::Char('n') if !app.input_mode => app.toggle_notification_mode(),
+                    KeyCode::Char('n') if !app.input_mode => {
+                        app.toggle_notification_mode();
+                        // Save config
+                        let mut config = crate::config::load_config().unwrap_or_default();
+                        config.notification_mode = Some(app.notification_mode);
+                        let _ = crate::config::save_config(&config);
+                    }
                     KeyCode::Char('i') if !app.input_mode => {
                         app.input_mode = true;
                         app.input_buffer.clear();
