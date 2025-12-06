@@ -597,11 +597,11 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mu
                     KeyCode::Char(c) if app.input_mode => {
                         app.input_buffer.push(c);
                     }
-                    KeyCode::PageUp => {
+                    KeyCode::PageUp | KeyCode::Char('K') => {
                         app.snap_to_bottom = false;
                         app.scroll_offset = app.scroll_offset.saturating_sub(10);
                     }
-                    KeyCode::PageDown => {
+                    KeyCode::PageDown | KeyCode::Char('J') => {
                         app.scroll_offset = app.scroll_offset.saturating_add(10);
                         if app.scroll_offset >= app.max_scroll {
                             app.snap_to_bottom = true;

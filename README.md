@@ -75,7 +75,7 @@ teams-tui
 
 - `↑` / `k` - Move up
 - `↓` / `j` - Move down  
-- `PgUp` / `PgDn` - Scroll chat
+- `PgUp` / `PgDn` / `K` / `J` - Scroll chat
 - `i` - Compose message
 - `n` - Toggle notifications (None/Console/System/Both)
 - `q` - Quit

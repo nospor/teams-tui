@@ -549,7 +549,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     let messages_widget = Paragraph::new(messages_content)
         .block(
             Block::default()
-                .title(if app.input_mode { "Messages (ESC to cancel)" } else { "Messages (i to compose, PgUp/PgDn to scroll)" })
+                .title(if app.input_mode { "Messages (ESC to cancel)" } else { "Messages (i to compose, PgUp(K)/PgDn(J) to scroll)" })
                 .borders(Borders::ALL)
         )
         .wrap(ratatui::widgets::Wrap { trim: false })
