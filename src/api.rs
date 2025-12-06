@@ -234,22 +234,6 @@ pub async fn send_message(access_token: &str, chat_id: &str, content: &str) -> R
     Ok(())
 }
 
-pub async fn get_url_bytes(access_token: &str, url: &str) -> Result<Vec<u8>> {
-    let client = reqwest::Client::new();
-    let response = client
-        .get(url)
-        .header("Authorization", format!("Bearer {}", access_token))
-        .send()
-        .await?;
-
-    if !response.status().is_success() {
-        anyhow::bail!("Failed to get content: {}", response.status());
-    }
-
-    let bytes = response.bytes().await?;
-    Ok(bytes.to_vec())
-}
-
 /// Mark a chat as read for the current user
 /// This marks all messages in the chat as read
 /// 

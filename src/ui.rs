@@ -6,7 +6,6 @@ use ratatui::{
     Frame,
 };
 use crate::app::App;
-use ratatui_image::{StatefulImage, Resize};
 
 // Get icon based on file extension or content type
 fn get_attachment_icon(name: &str, content_type: Option<&str>) -> &'static str {
@@ -54,15 +53,6 @@ fn get_attachment_icon(name: &str, content_type: Option<&str>) -> &'static str {
 }
 
 pub fn draw(f: &mut Frame, app: &mut App) {
-    struct ImageToRender {
-        id: String,
-        line_index: usize,
-        width: u16,
-        height: u16,
-        is_me: bool,
-    }
-    let mut images_to_render: Vec<ImageToRender> = Vec::new();
-
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
@@ -375,7 +365,26 @@ pub fn draw(f: &mut Frame, app: &mut App) {
                 }
             }
             
-
+            // Add pasted images as attachments
+            for image in &pasted_images {
+                // Use alt text as name if available, otherwise use src filename or "Pasted Image"
+                let image_name = image.alt.clone()
+                    .or_else(|| {
+                        image.src.as_ref().and_then(|s| {
+                            // Try to extract filename from URL
+                            s.split('/').last()
+                                .or_else(|| s.split('\\').last())
+                                .map(|n| n.split('?').next().unwrap_or(n).to_string())
+                        })
+                    })
+                    .unwrap_or_else(|| "Pasted Image".to_string());
+                
+                attachments.push(AttachmentDisplay {
+                    id: format!("img_{}", attachments.len()), // Unique ID for display
+                    name: Some(image_name),
+                    content_type: Some("image/png".to_string()), // Default to image, could be enhanced
+                });
+            }
             
             // Extract emoji alt text: <emoji ... alt="😅" ...> -> 😅
             // Process emoji tags by finding them and replacing with alt text
@@ -556,88 +565,6 @@ pub fn draw(f: &mut Frame, app: &mut App) {
                 }
             }
             
-            // Add pasted images as attachments
-            for image in &pasted_images {
-                // Use alt text as name if available, otherwise use src filename or "Pasted Image"
-                let image_name = image.alt.clone()
-                    .or_else(|| {
-                        image.src.as_ref().and_then(|s| {
-                            // Try to extract filename from URL
-                            s.split('/').last()
-                                .or_else(|| s.split('\\').last())
-                                .map(|n| n.split('?').next().unwrap_or(n).to_string())
-                        })
-                    })
-                    .unwrap_or_else(|| "Pasted Image".to_string());
-                
-                // Check if we have this image in cache
-                if let Some(src) = &image.src {
-                    if app.load_images && app.image_cache.contains_key(src) {
-                        // It's an image we can render!
-                        // We'll add it to our render list instead of just showing text
-                        // But we also want to show the text "Pasted Image" maybe?
-                        // For now, let's just render the image.
-                        
-                        // Calculate dimensions
-                        // Heuristic: 1 col ~= 10px width, 1 row ~= 20px height (1:2 aspect ratio of cell)
-                        // 80% of width, capped at view width
-                        
-                        let (img_w, img_h) = if let Some(img) = app.image_cache.get(src) {
-                            (img.width(), img.height())
-                        } else {
-                            (100, 100) // Fallback
-                        };
-                        
-                        let avail_width = width as u16;
-                        
-                        // Calculate target width in columns
-                        // We scale the image pixels to columns (divide by 10)
-                        // Then we apply the 80% scaling if it's large, or just ensure it fits
-                        // Let's try: target = min(img_w / 8, avail_width * 0.8)
-                        // This allows large images to take 80% of screen, and small images to be roughly natural size
-                        let target_width = std::cmp::min(
-                            (img_w as f32 / 8.0) as u16,
-                            (avail_width as f32 * 0.8) as u16
-                        );
-                        
-                        // Ensure at least some width
-                        let final_width = std::cmp::max(10, target_width);
-                        
-                        // Calculate height to maintain aspect ratio
-                        // Aspect ratio = w / h
-                        // Cell aspect ratio ~= 0.5 (w/h)
-                        // rows = cols * (img_h / img_w) / 0.5 = cols * (img_h / img_w) * 2
-                        let final_height = (final_width as f32 * (img_h as f32 / img_w as f32) / 2.1) as u16;
-                        let final_height = std::cmp::max(1, final_height);
-
-                        images_to_render.push(ImageToRender {
-                            id: src.clone(),
-                            line_index: lines.len(),
-                            width: final_width,
-                            height: final_height,
-                            is_me,
-                        });
-                        
-                        for _ in 0..final_height {
-                            lines.push(Line::from(""));
-                        }
-                    } else {
-                        // Fallback to text attachment if not loaded yet
-                        attachments.push(AttachmentDisplay {
-                            id: format!("img_{}", attachments.len()), // Unique ID for display
-                            name: Some(image_name),
-                            content_type: Some("image/png".to_string()), // Default to image, could be enhanced
-                        });
-                    }
-                } else {
-                     attachments.push(AttachmentDisplay {
-                        id: format!("img_{}", attachments.len()), // Unique ID for display
-                        name: Some(image_name),
-                        content_type: Some("image/png".to_string()), // Default to image, could be enhanced
-                    });
-                }
-            }
-            
             // Display attachments if any
             if !attachments.is_empty() {
                 for attachment in &attachments {
@@ -713,58 +640,6 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         .scroll((app.scroll_offset, 0));
 
     f.render_widget(messages_widget, messages_chunks[0]);
-
-    // Render images over the paragraph
-    let inner_area = messages_chunks[0].inner(ratatui::layout::Margin { vertical: 1, horizontal: 1 });
-    
-    for img_info in images_to_render {
-        // Calculate visual position
-        // line_index is 0-based index in lines
-        // scroll_offset is how many lines are scrolled off the top
-        
-        // If the image line is before the scroll offset, it's not visible (or partially)
-        // If it's after scroll_offset + height, it's not visible
-        
-        let line_y = img_info.line_index as i32 - app.scroll_offset as i32;
-        
-        // Check visibility
-        if line_y + (img_info.height as i32) > 0 && line_y < inner_area.height as i32 {
-            // Calculate intersection with viewport
-            let render_y = std::cmp::max(0, line_y);
-            let skip_lines = if line_y < 0 { -line_y } else { 0 };
-            let render_height = std::cmp::min(img_info.height as i32 - skip_lines as i32, inner_area.height as i32 - render_y);
-            
-            if render_height > 0 {
-                if let Some(image) = app.image_cache.get(&img_info.id) {
-                    // Get or create protocol
-                    if !app.image_protocols.contains_key(&img_info.id) {
-                        let protocol = app.picker.new_resize_protocol(image.clone());
-                        app.image_protocols.insert(img_info.id.clone(), protocol);
-                    }
-                    
-                    if let Some(protocol) = app.image_protocols.get_mut(&img_info.id) {
-                        let widget = StatefulImage::new(None).resize(Resize::Fit(None));
-                        
-                        let x = if img_info.is_me {
-                            // Right aligned
-                            inner_area.width.saturating_sub(img_info.width)
-                        } else {
-                            0
-                        };
-                        
-                        let area = ratatui::layout::Rect {
-                            x: inner_area.x + x,
-                            y: inner_area.y + render_y as u16,
-                            width: img_info.width,
-                            height: render_height as u16,
-                        };
-                        
-                        f.render_stateful_widget(widget, area, protocol);
-                    }
-                }
-            }
-        }
-    }
 
     // Render input field if in input mode
     if app.input_mode {

@@ -4,10 +4,30 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crate::config::{self, Config};
+#[derive(Debug, Serialize, Deserialize)]
+struct Config {
+    pub client_id: Option<String>,
+    pub tenant_id: Option<String>,
+}
+
+fn get_app_dir() -> Result<PathBuf> {
+    let config_dir = dirs::config_dir()
+        .context("Could not find config directory")?;
+    let app_dir = config_dir.join(crate::config::APP_DIR_NAME);
+    fs::create_dir_all(&app_dir)?;
+    Ok(app_dir)
+}
 
 fn load_config() -> Option<Config> {
-    config::load_config()
+    let app_dir = get_app_dir().ok()?;
+    let config_path = app_dir.join("config.json");
+    
+    if !config_path.exists() {
+        return None;
+    }
+    
+    let json = fs::read_to_string(config_path).ok()?;
+    serde_json::from_str(&json).ok()
 }
 
 fn get_client_id() -> String {

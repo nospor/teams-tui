@@ -1,8 +1,4 @@
 use crate::api::{Chat, Message};
-use std::collections::HashMap;
-use image::DynamicImage;
-use ratatui_image::picker::Picker;
-use ratatui_image::protocol::StatefulProtocol;
 
 pub struct App {
     pub chats: Vec<Chat>,
@@ -16,14 +12,10 @@ pub struct App {
     pub scroll_offset: u16,
     pub max_scroll: u16,
     pub snap_to_bottom: bool,
-    pub image_cache: HashMap<String, DynamicImage>,
-    pub image_protocols: HashMap<String, StatefulProtocol>,
-    pub picker: Picker,
-    pub load_images: bool,
 }
 
 impl App {
-    pub fn new(load_images: bool) -> App {
+    pub fn new() -> App {
         App {
             chats: Vec::new(),
             status: "Loading...".to_string(),
@@ -36,10 +28,6 @@ impl App {
             scroll_offset: 0,
             max_scroll: 0,
             snap_to_bottom: true,
-            image_cache: HashMap::new(),
-            image_protocols: HashMap::new(),
-            picker: Picker::from_query_stdio().unwrap_or_else(|_| Picker::from_fontsize((8, 16))),
-            load_images,
         }
     }
 
@@ -79,12 +67,5 @@ impl App {
                 self.selected_index = self.chats.len() - 1;
             }
         }
-    }
-    pub fn clear_image_protocols(&mut self) {
-        self.image_protocols.clear();
-    }
-
-    pub fn clear_messages(&mut self) {
-        self.messages.clear();
     }
 }
