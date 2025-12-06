@@ -65,6 +65,11 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         )
         .split(f.area());
 
+    // Visual bell effect: flash various UI elements or the background
+    let is_flashing = app.visual_bell_until
+        .map(|until| std::time::Instant::now() < until)
+        .unwrap_or(false);
+
     // Split main content horizontally: chats on left, messages on right
     let content_chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -582,13 +587,26 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     }
 
     // Status bar
-    let status = Paragraph::new(app.status.as_str())
+    let status_border_style = if is_flashing {
+        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD) // Flash Red
+    } else {
+        Style::default().fg(Color::Green)
+    };
+    
+    let status_text_style = if is_flashing {
+        Style::default().fg(Color::Red).bg(Color::White).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::Green)
+    };
+
+    let status = Paragraph::new(format!("{} | Notification (n): {}", app.status, app.notification_mode))
         .block(
             Block::default()
                 .title("Status")
                 .borders(Borders::ALL)
+                .border_style(status_border_style)
         )
-        .style(Style::default().fg(Color::Green));
+        .style(status_text_style);
 
     f.render_widget(status, main_chunks[1]);
 }

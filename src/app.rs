@@ -1,4 +1,24 @@
 use crate::api::{Chat, Message};
+use std::fmt;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum NotificationMode {
+    None,
+    Console,
+    System,
+    Both,
+}
+
+impl fmt::Display for NotificationMode {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            NotificationMode::None => write!(f, "None"),
+            NotificationMode::Console => write!(f, "Console"),
+            NotificationMode::System => write!(f, "System"),
+            NotificationMode::Both => write!(f, "Both"),
+        }
+    }
+}
 
 pub struct App {
     pub chats: Vec<Chat>,
@@ -12,6 +32,8 @@ pub struct App {
     pub scroll_offset: u16,
     pub max_scroll: u16,
     pub snap_to_bottom: bool,
+    pub notification_mode: NotificationMode,
+    pub visual_bell_until: Option<std::time::Instant>,
 }
 
 impl App {
@@ -28,6 +50,8 @@ impl App {
             scroll_offset: 0,
             max_scroll: 0,
             snap_to_bottom: true,
+            notification_mode: NotificationMode::None,
+            visual_bell_until: None,
         }
     }
 
@@ -67,5 +91,14 @@ impl App {
                 self.selected_index = self.chats.len() - 1;
             }
         }
+    }
+
+    pub fn toggle_notification_mode(&mut self) {
+        self.notification_mode = match self.notification_mode {
+            NotificationMode::None => NotificationMode::Console,
+            NotificationMode::Console => NotificationMode::System,
+            NotificationMode::System => NotificationMode::Both,
+            NotificationMode::Both => NotificationMode::None,
+        };
     }
 }

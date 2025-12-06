@@ -4,7 +4,7 @@ mod auth;
 mod api;
 pub mod config;
 
-use std::io;
+use std::io::{self, Write};
 use std::collections::HashMap;
 use anyhow::Result;
 use crossterm::{
@@ -16,7 +16,8 @@ use ratatui::{
     backend::CrosstermBackend,
     Terminal,
 };
-use crate::app::App;
+use crate::app::{App, NotificationMode};
+use notify_rust::Notification;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -364,6 +365,43 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mu
             };
             
             if is_new_message {
+                // Trigger notification based on mode
+                let sender = last_msg.from.as_ref()
+                    .and_then(|f| f.user.as_ref())
+                    .and_then(|u| u.display_name.as_ref())
+                    .map(|s| s.as_str())
+                    .unwrap_or("Unknown");
+                
+                let should_notify = match app.notification_mode {
+                    NotificationMode::None => false,
+                    NotificationMode::Console => true,
+                    NotificationMode::System => true,
+                    NotificationMode::Both => true,
+                };
+
+                if should_notify {
+                    let mode = app.notification_mode;
+                    let body = format!("New message from {}", sender);
+                    
+                    // console notification
+                    if mode == NotificationMode::Console || mode == NotificationMode::Both {
+                        print!("\x07"); // BEL
+                        let _ = io::stdout().flush();
+                        app.visual_bell_until = Some(std::time::Instant::now() + std::time::Duration::from_millis(200));
+                    }
+
+                    // system notification
+                    if mode == NotificationMode::System || mode == NotificationMode::Both {
+                        tokio::spawn(async move {
+                            let _ = Notification::new()
+                                .summary("TeamsTUI")
+                                .body(&body)
+                                .appname("TeamsTUI")
+                                .show();
+                        });
+                    }
+                }
+
                 // New message detected! Move chat to top of stable order
                 if let Some(pos) = stable_chat_order.iter().position(|id| id == &chat_id) {
                     stable_chat_order.remove(pos);
@@ -482,6 +520,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mu
                     KeyCode::Char('q') if !app.input_mode => return Ok(()),
                     KeyCode::Down | KeyCode::Char('j') if !app.input_mode => app.next_chat(),
                     KeyCode::Up | KeyCode::Char('k') if !app.input_mode => app.previous_chat(),
+                    KeyCode::Char('n') if !app.input_mode => app.toggle_notification_mode(),
                     KeyCode::Char('i') if !app.input_mode => {
                         app.input_mode = true;
                         app.input_buffer.clear();

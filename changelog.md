@@ -1,4 +1,8 @@
 # Changelog
+## v0.7.1 
+
+- Notifications (press m to switch between all)
+ 
 ## v0.7
 
 - Unfortunately I needed to revert images preview as it was breaking application in longer run

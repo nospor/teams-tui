@@ -77,6 +77,7 @@ teams-tui
 - `↓` / `j` - Move down  
 - `PgUp` / `PgDn` - Scroll chat
 - `i` - Compose message
+- `n` - Toggle notifications (None/Console/System/Both)
 - `q` - Quit
 
 ## Requirements
@@ -101,7 +102,7 @@ If at some point you want/need to re-authenticate, just delete the `token.json` 
 
 - [ ] Showing images
 - [ ] Yanking urls (eventually adding some kind of vim mode to select/yank any text)
-- [ ] Notification when new message will arrive (bell in terminal? system notification? maybe notification mode so user can switch between different modes? 0 - none, 1 - terminal bell, 2 - system notification)
+- [x] Notification when new message will arrive (Console/System/Both modes added)
 
 ## License
 
