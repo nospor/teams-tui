@@ -1,4 +1,8 @@
 # Changelog
+## v0.7
+
+- Unfortunately I needed to revert images preview as it was breaking application in longer run
+- Attachments names appear in proper order now
 
 ## v0.6
 

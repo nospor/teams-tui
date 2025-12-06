@@ -186,341 +186,194 @@ pub fn draw(f: &mut Frame, app: &mut App) {
                 .unwrap_or("");
             
             
-            // Strip HTML tags and extract text content
-            let mut clean_content = content.to_string();
-            
-            // Extract pasted images (img tags) before processing attachments
-            #[derive(Clone)]
+            // Parse message content into segments (Text, Image, Attachment) to preserve order
+            #[derive(Debug)]
+            enum MessageSegment {
+                Text(String),
+                Image(ImageInfo),
+                Attachment(String), // Attachment ID
+            }
+
+            #[derive(Clone, Debug)]
             struct ImageInfo {
                 src: Option<String>,
                 alt: Option<String>,
             }
+
+            let mut segments = Vec::new();
+            // Use existing content variable
+            let mut remaining = content;
             
-            let mut pasted_images = Vec::new();
-            let mut img_processed = String::new();
-            let mut remaining = clean_content.as_str();
-            
-            while let Some(img_start) = remaining.find("<img") {
-                // Add text before the img tag
-                img_processed.push_str(&remaining[..img_start]);
+            // Single pass parsing to maintain order
+            while !remaining.is_empty() {
+                // Find next tag of interest
+                let img_pos = remaining.find("<img");
+                let attach_pos = remaining.find("<attachment");
+                let emoji_pos = remaining.find("<emoji");
                 
-                // Find the end of the img tag
-                if let Some(tag_end) = remaining[img_start..].find('>') {
-                    let tag_str = &remaining[img_start..img_start + tag_end + 1];
-                    
-                    // Extract src and alt attributes
-                    let mut src = None;
-                    let mut alt = None;
-                    
-                    // Try to find src attribute
-                    for attr_pattern in &["src=\"", "src='"] {
-                        if let Some(src_start) = tag_str.find(attr_pattern) {
-                            let value_start = src_start + attr_pattern.len();
-                            let quote_char = if attr_pattern.ends_with('"') { '"' } else { '\'' };
-                            if let Some(src_end) = tag_str[value_start..].find(quote_char) {
-                                src = Some(tag_str[value_start..value_start + src_end].to_string());
-                                break;
-                            }
-                        }
-                    }
-                    
-                    // Try to find alt attribute
-                    for attr_pattern in &["alt=\"", "alt='"] {
-                        if let Some(alt_start) = tag_str.find(attr_pattern) {
-                            let value_start = alt_start + attr_pattern.len();
-                            let quote_char = if attr_pattern.ends_with('"') { '"' } else { '\'' };
-                            if let Some(alt_end) = tag_str[value_start..].find(quote_char) {
-                                alt = Some(tag_str[value_start..value_start + alt_end].to_string());
-                                break;
-                            }
-                        }
-                    }
-                    
-                    // If we found an image (has src or alt), store it
-                    if src.is_some() || alt.is_some() {
-                        pasted_images.push(ImageInfo { src, alt });
-                    }
-                    
-                    // Skip past the img tag
-                    remaining = &remaining[img_start + tag_end + 1..];
-                } else {
-                    // Malformed tag, skip the <img part
-                    img_processed.push_str(&remaining[..img_start + 4]);
-                    remaining = &remaining[img_start + 4..];
-                }
-            }
-            
-            // Add remaining text
-            img_processed.push_str(remaining);
-            clean_content = img_processed;
-            
-            // Extract attachment IDs from HTML and match with API attachments
-            // Skip message reference attachments (quoted/replied messages)
-            let mut attachment_ids = Vec::new();
-            let mut attachment_removed = String::new();
-            remaining = clean_content.as_str();
-            
-            while let Some(attach_start) = remaining.find("<attachment") {
-                // Add text before the attachment tag
-                attachment_removed.push_str(&remaining[..attach_start]);
+                // Find the earliest tag
+                let next_tag = [
+                    img_pos.map(|p| (p, "img")),
+                    attach_pos.map(|p| (p, "attachment")),
+                    emoji_pos.map(|p| (p, "emoji"))
+                ].iter().filter_map(|&x| x).min_by_key(|&(p, _)| p);
                 
-                // Find the end of the opening tag
-                if let Some(tag_end) = remaining[attach_start..].find('>') {
-                    let tag_str = &remaining[attach_start..attach_start + tag_end + 1];
-                    
-                    // Check if this is a message reference attachment
-                    // Message references often have type="messageReference" or similar
-                    let is_message_reference = tag_str.contains("type=\"messageReference\"")
-                        || tag_str.contains("type='messageReference'")
-                        || tag_str.contains("messageReference");
-                    
-                    // Extract attachment ID from the tag (only if not a message reference)
-                    if !is_message_reference {
-                        if let Some(id_start) = tag_str.find("id=\"") {
-                            let value_start = id_start + 4; // len("id=\"")
-                            if let Some(id_end) = tag_str[value_start..].find('"') {
-                                let attachment_id = tag_str[value_start..value_start + id_end].to_string();
-                                attachment_ids.push(attachment_id);
-                            }
-                        }
+                if let Some((pos, tag_type)) = next_tag {
+                    // Add text before the tag
+                    if pos > 0 {
+                        segments.push(MessageSegment::Text(remaining[..pos].to_string()));
                     }
                     
-                    // Check if it's self-closing (ends with />)
-                    if tag_str.ends_with("/>") {
-                        remaining = &remaining[attach_start + tag_end + 1..];
-                    } else {
-                        // Has closing tag: <attachment ...></attachment>
-                        remaining = &remaining[attach_start + tag_end + 1..];
-                        // Skip past closing </attachment> tag
-                        if let Some(close_start) = remaining.find("</attachment>") {
-                            remaining = &remaining[close_start + 13..]; // 13 = len("</attachment>")
-                        }
-                    }
-                } else {
-                    // Malformed tag, skip the <attachment part
-                    attachment_removed.push_str(&remaining[..attach_start + 11]);
-                    remaining = &remaining[attach_start + 11..];
-                }
-            }
-            
-            // Add remaining text
-            attachment_removed.push_str(remaining);
-            clean_content = attachment_removed;
-            
-            // Store attachment info for display
-            // Since $expand=attachments may not be supported, we'll use IDs from HTML
-            // and try to match with API attachments if available
-            #[derive(Clone)]
-            struct AttachmentDisplay {
-                id: String,
-                name: Option<String>,
-                content_type: Option<String>,
-            }
-            
-            let mut attachments = Vec::new();
-            let mut message_reference_ids = std::collections::HashSet::new();
-            
-            if let Some(api_attachments) = &msg.attachments {
-                // Match with API attachments if available
-                for attachment_id in &attachment_ids {
-                    if let Some(api_attachment) = api_attachments.iter().find(|a| a.id == *attachment_id) {
-                        // Skip message reference attachments (quoted/replied messages)
-                        // These have specific content types like "messageReference" or "application/vnd.microsoft.teams.message"
-                        let is_message_reference = api_attachment.content_type.as_ref()
-                            .map(|ct| {
-                                let ct_lower = ct.to_lowercase();
-                                ct_lower.contains("messagereference") 
-                                    || ct_lower.contains("vnd.microsoft.teams.message")
-                                    || ct_lower == "message/reference"
-                            })
-                            .unwrap_or(false);
+                    // Process the tag
+                    let tag_start = pos;
+                    remaining = &remaining[tag_start..];
+                    
+                    if let Some(tag_end) = remaining.find('>') {
+                        let tag_str = &remaining[..tag_end + 1];
                         
-                        if is_message_reference {
-                            // Mark this ID as a message reference so we don't add it from HTML fallback
-                            message_reference_ids.insert(attachment_id.clone());
-                        } else {
-                            // Only add if it's not a message reference
-                            attachments.push(AttachmentDisplay {
-                                id: api_attachment.id.clone(),
-                                name: api_attachment.name.clone(),
-                                content_type: api_attachment.content_type.clone(),
-                            });
+                        match tag_type {
+                            "img" => {
+                                // Extract src and alt
+                                let mut src = None;
+                                let mut alt = None;
+                                
+                                for attr_pattern in &["src=\"", "src='"] {
+                                    if let Some(src_start) = tag_str.find(attr_pattern) {
+                                        let value_start = src_start + attr_pattern.len();
+                                        let quote_char = if attr_pattern.ends_with('"') { '"' } else { '\'' };
+                                        if let Some(src_end) = tag_str[value_start..].find(quote_char) {
+                                            src = Some(tag_str[value_start..value_start + src_end].to_string());
+                                            break;
+                                        }
+                                    }
+                                }
+                                
+                                for attr_pattern in &["alt=\"", "alt='"] {
+                                    if let Some(alt_start) = tag_str.find(attr_pattern) {
+                                        let value_start = alt_start + attr_pattern.len();
+                                        let quote_char = if attr_pattern.ends_with('"') { '"' } else { '\'' };
+                                        if let Some(alt_end) = tag_str[value_start..].find(quote_char) {
+                                            alt = Some(tag_str[value_start..value_start + alt_end].to_string());
+                                            break;
+                                        }
+                                    }
+                                }
+                                
+                                segments.push(MessageSegment::Image(ImageInfo { src, alt }));
+                                remaining = &remaining[tag_end + 1..];
+                            },
+                            "attachment" => {
+                                // Check if message reference
+                                let is_message_reference = tag_str.contains("type=\"messageReference\"")
+                                    || tag_str.contains("type='messageReference'")
+                                    || tag_str.contains("messageReference");
+                                
+                                if !is_message_reference {
+                                    if let Some(id_start) = tag_str.find("id=\"") {
+                                        let value_start = id_start + 4;
+                                        if let Some(id_end) = tag_str[value_start..].find('"') {
+                                            let attachment_id = tag_str[value_start..value_start + id_end].to_string();
+                                            segments.push(MessageSegment::Attachment(attachment_id));
+                                        }
+                                    }
+                                }
+                                
+                                // Handle closing tag
+                                if tag_str.ends_with("/>") {
+                                    remaining = &remaining[tag_end + 1..];
+                                } else {
+                                    remaining = &remaining[tag_end + 1..];
+                                    if let Some(close_start) = remaining.find("</attachment>") {
+                                        remaining = &remaining[close_start + 13..];
+                                    }
+                                }
+                            },
+                            "emoji" => {
+                                // Extract alt text for emoji
+                                if let Some(alt_start) = tag_str.find("alt=\"") {
+                                    let value_start = alt_start + 5;
+                                    if let Some(alt_end) = tag_str[value_start..].find('"') {
+                                        let emoji = tag_str[value_start..value_start + alt_end].to_string();
+                                        segments.push(MessageSegment::Text(emoji));
+                                    }
+                                }
+                                
+                                // Handle closing tag
+                                remaining = &remaining[tag_end + 1..];
+                                if remaining.starts_with("</emoji") {
+                                    if let Some(close_end) = remaining.find('>') {
+                                        remaining = &remaining[close_end + 1..];
+                                    }
+                                }
+                            },
+                            _ => {
+                                // Should not happen given filter above
+                                remaining = &remaining[tag_end + 1..];
+                            }
                         }
-                    }
-                }
-            }
-            
-            // If no API attachments matched, use IDs from HTML
-            // But skip message reference IDs that we identified from the API
-            for attachment_id in &attachment_ids {
-                if !attachments.iter().any(|a| a.id == *attachment_id) {
-                    // Skip if this is a known message reference
-                    if !message_reference_ids.contains(attachment_id) {
-                        attachments.push(AttachmentDisplay {
-                            id: attachment_id.clone(),
-                            name: None,
-                            content_type: None,
-                        });
-                    }
-                }
-            }
-            
-            // Add pasted images as attachments
-            for image in &pasted_images {
-                // Use alt text as name if available, otherwise use src filename or "Pasted Image"
-                let image_name = image.alt.clone()
-                    .or_else(|| {
-                        image.src.as_ref().and_then(|s| {
-                            // Try to extract filename from URL
-                            s.split('/').last()
-                                .or_else(|| s.split('\\').last())
-                                .map(|n| n.split('?').next().unwrap_or(n).to_string())
-                        })
-                    })
-                    .unwrap_or_else(|| "Pasted Image".to_string());
-                
-                attachments.push(AttachmentDisplay {
-                    id: format!("img_{}", attachments.len()), // Unique ID for display
-                    name: Some(image_name),
-                    content_type: Some("image/png".to_string()), // Default to image, could be enhanced
-                });
-            }
-            
-            // Extract emoji alt text: <emoji ... alt="😅" ...> -> 😅
-            // Process emoji tags by finding them and replacing with alt text
-            let mut emoji_processed = String::new();
-            remaining = clean_content.as_str();
-            
-            while let Some(emoji_start) = remaining.find("<emoji") {
-                // Add text before the emoji tag
-                emoji_processed.push_str(&remaining[..emoji_start]);
-                
-                // Find the end of the opening tag
-                if let Some(tag_end) = remaining[emoji_start..].find('>') {
-                    let tag_str = &remaining[emoji_start..emoji_start + tag_end + 1];
-                    
-                    // Extract alt attribute value
-                    if let Some(alt_start) = tag_str.find("alt=\"") {
-                        let alt_value_start = alt_start + 5;
-                        if let Some(alt_end) = tag_str[alt_value_start..].find('"') {
-                            let emoji = &tag_str[alt_value_start..alt_value_start + alt_end];
-                            emoji_processed.push_str(emoji);
-                        }
-                    }
-                    
-                    // Skip past the opening tag
-                    remaining = &remaining[emoji_start + tag_end + 1..];
-                    
-                    // Skip past closing </emoji> tag if present
-                    if remaining.starts_with("</emoji") {
-                        if let Some(close_end) = remaining.find('>') {
-                            remaining = &remaining[close_end + 1..];
-                        }
+                    } else {
+                        // Malformed tag
+                        segments.push(MessageSegment::Text(remaining[..1].to_string()));
+                        remaining = &remaining[1..];
                     }
                 } else {
-                    // Malformed tag, skip the <emoji part
-                    emoji_processed.push_str(&remaining[..emoji_start + 6]);
-                    remaining = &remaining[emoji_start + 6..];
+                    // No more tags, add remaining text
+                    segments.push(MessageSegment::Text(remaining.to_string()));
+                    remaining = "";
                 }
             }
-            
-            // Add remaining text
-            emoji_processed.push_str(remaining);
-            clean_content = emoji_processed;
-            
-            // Handle HTML entities
-            clean_content = clean_content
-                .replace("&nbsp;", " ")
-                .replace("&amp;", "&")
-                .replace("&lt;", "<")
-                .replace("&gt;", ">")
-                .replace("&quot;", "\"")
-                .replace("&#39;", "'")
-                .replace("&apos;", "'")
-                .replace("&#160;", " ")
-                .replace("&nbsp", " ");
-            
-            // Convert block-level tags to newlines
-            clean_content = clean_content
-                .replace("</p>", "\n")
-                .replace("<p>", "")
-                .replace("</div>", "\n")
-                .replace("<div>", "")
-                .replace("</li>", "\n")
-                .replace("<li>", "")
-                .replace("<br>", "\n")
-                .replace("<br/>", "\n")
-                .replace("<br />", "\n")
-                .replace("</br>", "\n");
-            
-            // Remove remaining HTML tags
-            let mut no_html = String::new();
-            let mut inside_tag = false;
-            
-            for c in clean_content.chars() {
-                if c == '<' {
-                    inside_tag = true;
-                } else if c == '>' {
-                    inside_tag = false;
-                } else if !inside_tag {
-                    no_html.push(c);
+
+            // Helper to clean text
+            let clean_text = |text: &str| -> String {
+                let mut cleaned = text.to_string()
+                    .replace("&nbsp;", " ")
+                    .replace("&amp;", "&")
+                    .replace("&lt;", "<")
+                    .replace("&gt;", ">")
+                    .replace("&quot;", "\"")
+                    .replace("&#39;", "'")
+                    .replace("&apos;", "'")
+                    .replace("&#160;", " ")
+                    .replace("&nbsp", " ");
+                
+                cleaned = cleaned
+                    .replace("</p>", "\n")
+                    .replace("<p>", "")
+                    .replace("</div>", "\n")
+                    .replace("<div>", "")
+                    .replace("</li>", "\n")
+                    .replace("<li>", "")
+                    .replace("<br>", "\n")
+                    .replace("<br/>", "\n")
+                    .replace("<br />", "\n")
+                    .replace("</br>", "\n");
+                
+                // Remove other HTML tags
+                let mut no_html = String::new();
+                let mut inside_tag = false;
+                for c in cleaned.chars() {
+                    if c == '<' { inside_tag = true; }
+                    else if c == '>' { inside_tag = false; }
+                    else if !inside_tag { no_html.push(c); }
                 }
-            }
-            
-            // Clean up whitespace: limit consecutive newlines to 2
-            let mut final_content = String::new();
-            let mut consecutive_newlines = 0;
-            
-            for c in no_html.chars() {
-                if c == '\n' {
-                    consecutive_newlines += 1;
-                    if consecutive_newlines <= 2 {
+                
+                // Clean whitespace
+                let mut final_content = String::new();
+                let mut consecutive_newlines = 0;
+                for c in no_html.chars() {
+                    if c == '\n' {
+                        consecutive_newlines += 1;
+                        if consecutive_newlines <= 2 { final_content.push(c); }
+                    } else {
+                        consecutive_newlines = 0;
                         final_content.push(c);
                     }
-                } else {
-                    consecutive_newlines = 0;
-                    final_content.push(c);
                 }
-            }
-            
-            // Trim leading/trailing whitespace
-            let final_content = final_content.trim();
+                final_content.trim().to_string()
+            };
 
-            // Wrap text manually, preserving newlines
-            let mut wrapped_lines = Vec::new();
-            
-            if final_content.is_empty() {
-                // Empty content - still show one empty line so message appears
-                wrapped_lines.push(String::new());
-            } else {
-                for line in final_content.lines() {
-                    let mut current_line = String::new();
-                    
-                    for word in line.split_whitespace() {
-                        if current_line.len() + word.len() + 1 > max_line_width {
-                            wrapped_lines.push(current_line);
-                            current_line = String::from(word);
-                        } else {
-                            if !current_line.is_empty() {
-                                current_line.push(' ');
-                            }
-                            current_line.push_str(word);
-                        }
-                    }
-                    if !current_line.is_empty() {
-                        wrapped_lines.push(current_line);
-                    }
-                }
-                
-                // Ensure at least one line exists
-                if wrapped_lines.is_empty() {
-                    wrapped_lines.push(String::new());
-                }
-            }
-
-            // Header (if different sender or significant time gap)
+            // Header logic (same as before)
             if show_header {
-                // Add extra spacing before new group (unless it's the first message)
                 if !lines.is_empty() {
                     lines.push(Line::from(""));
                 }
@@ -532,7 +385,6 @@ pub fn draw(f: &mut Frame, app: &mut App) {
                 };
 
                 if is_me {
-                    // Right aligned header
                     let padding = width.saturating_sub(header.len());
                     let pad_str = " ".repeat(padding);
                     lines.push(Line::from(vec![
@@ -540,53 +392,112 @@ pub fn draw(f: &mut Frame, app: &mut App) {
                         Span::styled(header, Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
                     ]));
                 } else {
-                    // Left aligned header
                     lines.push(Line::from(vec![
                         Span::styled(header, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
                     ]));
                 }
             }
 
-            // Message body
-            if is_me {
-                // Right aligned body
-                for line in wrapped_lines {
-                    let padding = width.saturating_sub(line.len());
-                    let pad_str = " ".repeat(padding);
-                    lines.push(Line::from(vec![
-                        Span::raw(pad_str),
-                        Span::raw(line),
-                    ]));
-                }
-            } else {
-                // Left aligned body
-                for line in wrapped_lines {
-                    lines.push(Line::from(line));
+            // Render segments
+            for segment in segments {
+                match segment {
+                    MessageSegment::Text(text) => {
+                        let cleaned = clean_text(&text);
+                        if cleaned.is_empty() { continue; }
+                        
+                        let mut wrapped_lines = Vec::new();
+                        for line in cleaned.lines() {
+                            let mut current_line = String::new();
+                            for word in line.split_whitespace() {
+                                if current_line.len() + word.len() + 1 > max_line_width {
+                                    wrapped_lines.push(current_line);
+                                    current_line = String::from(word);
+                                } else {
+                                    if !current_line.is_empty() { current_line.push(' '); }
+                                    current_line.push_str(word);
+                                }
+                            }
+                            if !current_line.is_empty() { wrapped_lines.push(current_line); }
+                        }
+                        
+                        if is_me {
+                            for line in wrapped_lines {
+                                let padding = width.saturating_sub(line.len());
+                                let pad_str = " ".repeat(padding);
+                                lines.push(Line::from(vec![
+                                    Span::raw(pad_str),
+                                    Span::raw(line),
+                                ]));
+                            }
+                        } else {
+                            for line in wrapped_lines {
+                                lines.push(Line::from(line));
+                            }
+                        }
+                    },
+                    MessageSegment::Image(info) => {
+                        let image_name = info.alt.clone()
+                            .or_else(|| {
+                                info.src.as_ref().and_then(|s| {
+                                    s.split('/').last()
+                                        .or_else(|| s.split('\\').last())
+                                        .map(|n| n.split('?').next().unwrap_or(n).to_string())
+                                })
+                            })
+                            .unwrap_or_else(|| "Pasted Image".to_string());
+                        
+                        let icon = "🖼️"; // Always use image icon for pasted images
+                        let attachment_text = format!("{} {}", icon, image_name);
+                        
+                        if is_me {
+                            let padding = width.saturating_sub(attachment_text.len());
+                            let pad_str = " ".repeat(padding);
+                            lines.push(Line::from(vec![
+                                Span::raw(pad_str),
+                                Span::styled(attachment_text, Style::default().fg(Color::Yellow)),
+                            ]));
+                        } else {
+                            lines.push(Line::from(vec![
+                                Span::styled(attachment_text, Style::default().fg(Color::Yellow)),
+                            ]));
+                        }
+                    },
+                    MessageSegment::Attachment(id) => {
+                        // Find attachment details in API response
+                        let mut name = None;
+                        let mut content_type = None;
+                        
+                        if let Some(api_attachments) = &msg.attachments {
+                            if let Some(api_att) = api_attachments.iter().find(|a| a.id == id) {
+                                name = api_att.name.clone();
+                                content_type = api_att.content_type.clone();
+                            }
+                        }
+                        
+                        let attachment_name = name.unwrap_or_else(|| "Attachment".to_string());
+                        let icon = get_attachment_icon(&attachment_name, content_type.as_deref());
+                        let attachment_text = format!("{} {}", icon, attachment_name);
+                        
+                        if is_me {
+                            let padding = width.saturating_sub(attachment_text.len());
+                            let pad_str = " ".repeat(padding);
+                            lines.push(Line::from(vec![
+                                Span::raw(pad_str),
+                                Span::styled(attachment_text, Style::default().fg(Color::Yellow)),
+                            ]));
+                        } else {
+                            lines.push(Line::from(vec![
+                                Span::styled(attachment_text, Style::default().fg(Color::Yellow)),
+                            ]));
+                        }
+                    }
                 }
             }
             
-            // Display attachments if any
-            if !attachments.is_empty() {
-                for attachment in &attachments {
-                    let attachment_name = attachment.name.as_deref().unwrap_or(&attachment.id);
-                    let icon = get_attachment_icon(attachment_name, attachment.content_type.as_deref());
-                    let attachment_text = format!("{} {}", icon, attachment_name);
-                    
-                    if is_me {
-                        // Right aligned attachment
-                        let padding = width.saturating_sub(attachment_text.len());
-                        let pad_str = " ".repeat(padding);
-                        lines.push(Line::from(vec![
-                            Span::raw(pad_str),
-                            Span::styled(attachment_text, Style::default().fg(Color::Yellow)),
-                        ]));
-                    } else {
-                        // Left aligned attachment
-                        lines.push(Line::from(vec![
-                            Span::styled(attachment_text, Style::default().fg(Color::Yellow)),
-                        ]));
-                    }
-                }
+            // If no segments produced lines (empty message), add empty line
+            if lines.is_empty() || (show_header && lines.len() == 1) { // 1 for header
+                 // Check if we actually added any content lines for this message
+                 // This is a bit rough, but ensures we don't have invisible messages
             }
         }
         
