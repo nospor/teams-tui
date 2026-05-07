@@ -1,5 +1,8 @@
 # TeamsTUI
 
+> [!WARNING]
+> This project is deprecated. A new version written in Go is available at [https://github.com/nospor/teams-tui-go](https://github.com/nospor/teams-tui-go).
+
 A Rust-based Terminal User Interface (TUI) for Microsoft Teams, built around keyboard-driven navigation.  
 Use arrow keys (or h/j) to switch chats, press *i* to enter message-input mode, and enjoy a fast, distraction-free Teams experience inside the terminal.
 

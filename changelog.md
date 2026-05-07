@@ -1,7 +1,9 @@
 # Changelog
+
 ## v0.7.1 
 
 - Notifications (press m to switch between all)
+- Adding J/K to scroll messages
  
 ## v0.7
 
